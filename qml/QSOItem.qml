@@ -3,6 +3,7 @@ import QtQuick.Layouts 1.0
 import QtQuick.Controls 2.12
 import QtQuick.Controls.Material 2.4
 import Qt5Compat.GraphicalEffects
+import Qt.labs.platform // MessageDialog, as on the Export page
 
 SwipeDelegate {
     id: swipeDelegateId
@@ -401,9 +402,21 @@ SwipeDelegate {
                 opacity: 0.87
             }
 
-            onClicked: {
-                qsoModel.deleteQSO(index)
-            }
+            // One click used to delete with no way back; with DxQSO sync on it also deletes the
+            // QSO on DxQSO. Ask first.
+            onClicked: deleteConfirm.open()
+        }
+
+        MessageDialog {
+            id: deleteConfirm
+            title: qsTr("Delete?")
+            text: (settings.dxqsoActive
+                   ? qsTr("Delete this QSO here and on DxQSO?")
+                   : qsTr("Delete this QSO?"))
+                  + "\n\n" + model.call.toUpperCase() + "  " + model.date + "  " + model.time
+            buttons: MessageDialog.Yes | MessageDialog.No
+            onYesClicked: qsoModel.deleteQSO(index)
+            onNoClicked: swipe.close()
         }
     }
 }
