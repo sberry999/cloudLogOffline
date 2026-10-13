@@ -30,17 +30,33 @@ Page {
         }
     }
 
+    // Set when the button starts a sync, so that sync (and only that one) answers in a dialog;
+    // automatic syncs only update the lines under the button.
+    property bool dxqsoSyncRequested: false
+
+    function refreshDxqso() {
+        dxqsoWaiting.text = qsTr("Waiting to be sent") + ": " + dx.waitingCount()
+        dxqsoRejected.text = dx.rejectedQsos().join("\n")
+    }
+
     Connections{
         target: dx
 
         function onSyncFailed(error) {
+            refreshDxqso()
+            dxqsoSyncRequested = false
             cloudLogMessage.text = error
             console.log(error)
             cloudLogMessage.open()
         }
 
         function onSyncFinished(summary) {
-            dxqsoWaiting.text = qsTr("Waiting to be sent") + ": " + dx.waitingCount()
+            refreshDxqso()
+            if (dxqsoSyncRequested) {
+                dxqsoSyncRequested = false
+                cloudLogMessage.text = "DxQSO: " + summary
+                cloudLogMessage.open()
+            }
         }
     }
 
@@ -72,6 +88,7 @@ Page {
                 Layout.columnSpan: 2
 
                 onClicked: {
+                    dxqsoSyncRequested = true
                     dx.syncFromButton()
                 }
             }
@@ -82,6 +99,28 @@ Page {
                 text: qsTr("Waiting to be sent") + ": " + dx.waitingCount()
                 Layout.columnSpan: 2
                 Layout.leftMargin: 10
+            }
+
+            Label {
+                visible: settings.dxqsoActive && dxqsoRejected.text.length > 0
+                text: qsTr("Not sent to DxQSO. Edit the QSO to fix it and it is sent again:")
+                wrapMode: Text.WordWrap
+                color: Material.color(Material.Orange)
+                Layout.columnSpan: 2
+                Layout.fillWidth: true
+                Layout.leftMargin: 10
+                Layout.rightMargin: 10
+            }
+
+            Label {
+                id: dxqsoRejected
+                visible: settings.dxqsoActive && text.length > 0
+                text: dx.rejectedQsos().join("\n")
+                wrapMode: Text.WordWrap
+                Layout.columnSpan: 2
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 10
             }
 
             Label {

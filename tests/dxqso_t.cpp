@@ -291,6 +291,25 @@ private slots:
         QCOMPARE(count("SELECT COUNT(*) FROM dxqso_pending_deletes"), 0);
     }
 
+    void badFrequencyIsCaughtHere() {
+        int before = api->uploads.size();
+        model->addQSO("K2EZ", "Name", "USA", "13.10.2026", "03:30", "14.1.1", "SSB", "59", "59",
+                      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+        QSignalSpy failed(dx, &dxqsoManager::syncFailed);
+        QVERIFY(sync());
+        QCOMPARE(api->uploads.size(), before);          // never sent
+        QCOMPARE(failed.size(), 1);                      // the button says why
+        QStringList rejected = dx->rejectedQsos();
+        QVERIFY2(rejected.join("|").contains("K2EZ 13.10.2026 03:30") &&
+                 rejected.join("|").contains("14.1.1"), qPrintable(rejected.join("|")));
+        // Fixed by an edit, it goes.
+        model->updateQSO(rowOf("K2EZ"), "K2EZ", "Name", "USA", "13.10.2026", "03:30", "14.1", "SSB",
+                         "59", "59", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+        QVERIFY(sync());
+        QCOMPARE(api->uploads.last()["call"].toString(), QString("K2EZ"));
+        QVERIFY(!dx->rejectedQsos().join("|").contains("K2EZ"));
+    }
+
     void unsentDeleteIsNotUndone() {
         add("W3GONE", "11:00");
         QVERIFY(sync());
@@ -343,6 +362,7 @@ private slots:
         QCOMPARE(failed.size(), 1);
         QCOMPARE(value("SELECT x.status FROM dxqso_qso x JOIN qsos q ON q.id = x.qso_rowid"
                        " WHERE q.call = 'REJECT'"), QString("R"));
+        QVERIFY(dx->rejectedQsos().join("|").contains("REJECT 10.10.2026 13:30 — test"));
         QCOMPARE(dx->waitingCount(), 0);    // not retried until edited
     }
 

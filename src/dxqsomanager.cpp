@@ -165,6 +165,10 @@ void dxqsoManager::ensureSchema()
             qDebug() << "DxQSO schema:" << q.lastError().text();
         }
     }
+    // Why a QSO was rejected (status R). Added after the first test builds.
+    if (!QSqlDatabase::database().record("dxqso_qso").contains("reason")) {
+        q.exec("ALTER TABLE dxqso_qso ADD COLUMN reason TEXT");
+    }
     // Mappings left by a build without the trigger.
     q.exec("DELETE FROM dxqso_qso WHERE qso_rowid NOT IN (SELECT id FROM qsos)");
 }
@@ -186,28 +190,45 @@ void dxqsoManager::setState(const QString &name, const QString &value)
     q.exec();
 }
 
-void dxqsoManager::setQsoState(int id, const QString &status, const QString &qsoId)
+void dxqsoManager::setQsoState(int id, const QString &status, const QString &qsoId, const QString &reason)
 {
     QSqlQuery q;
     QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    QVariant why = reason.isEmpty() ? QVariant() : QVariant(reason);
     if (!qsoId.isEmpty()) {
-        q.prepare("INSERT INTO dxqso_qso (qso_rowid, qso_id, status, uploaded_at) VALUES (?, ?, ?, ?)"
+        q.prepare("INSERT INTO dxqso_qso (qso_rowid, qso_id, status, uploaded_at, reason) VALUES (?, ?, ?, ?, ?)"
                   " ON CONFLICT(qso_rowid) DO UPDATE SET qso_id = excluded.qso_id,"
-                  " status = excluded.status, uploaded_at = excluded.uploaded_at");
+                  " status = excluded.status, uploaded_at = excluded.uploaded_at, reason = excluded.reason");
         q.addBindValue(id);
         q.addBindValue(qsoId);
     } else {
         // No id given: keep the one already held.
-        q.prepare("INSERT INTO dxqso_qso (qso_rowid, status, uploaded_at) VALUES (?, ?, ?)"
+        q.prepare("INSERT INTO dxqso_qso (qso_rowid, status, uploaded_at, reason) VALUES (?, ?, ?, ?)"
                   " ON CONFLICT(qso_rowid) DO UPDATE SET status = excluded.status,"
-                  " uploaded_at = excluded.uploaded_at");
+                  " uploaded_at = excluded.uploaded_at, reason = excluded.reason");
         q.addBindValue(id);
     }
     q.addBindValue(status);
     q.addBindValue(now);
+    q.addBindValue(why);
     if (!q.exec()) {
         qDebug() << "DxQSO state:" << q.lastError().text();
     }
+}
+
+QStringList dxqsoManager::rejectedQsos() const
+{
+    QStringList out;
+    QSqlQuery q("SELECT q.call, q.date, q.time, coalesce(x.reason, '') FROM qsos q"
+                " JOIN dxqso_qso x ON x.qso_rowid = q.id WHERE x.status = 'R' ORDER BY q.id");
+    while (q.next()) {
+        QString line = q.value(0).toString() + " " + q.value(1).toString() + " " + q.value(2).toString();
+        if (!q.value(3).toString().isEmpty()) {
+            line += QString::fromUtf8(" — ") + q.value(3).toString();
+        }
+        out << line;
+    }
+    return out;
 }
 
 /* ── QSO events (fired by qsoModel) ────────────────────────────────────────────────── */
@@ -332,10 +353,12 @@ void dxqsoManager::finishRun(const QString &fatal)
     emit busyChanged();
     // An automatic run (a saved QSO, the timer, coming back to the app) only updates the status
     // line: offline in the field, every QSO saved would otherwise raise a dialog.
-    if (errors.isEmpty()) {
-        emit syncFinished(summary);
-    } else if (manualRun) {
+    if (manualRun && !errors.isEmpty()) {
         emit syncFailed(errors.join("\n"));
+    } else {
+        // Also after an automatic run that hit errors: the page refreshes what it shows, and
+        // the errors stay on the status line and in the rejected list.
+        emit syncFinished(summary);
     }
     if (rerun) {
         bool d = rerunDownload, m = rerunManual;
@@ -510,9 +533,29 @@ void dxqsoManager::stepUpload()
     q.exec();
     batchIds.clear();
     batchPayload = QJsonArray();
+    bool any = false;
     while (q.next()) {
-        batchIds << q.value("id").toInt();
-        batchPayload.append(qsoPayload(q));
+        any = true;
+        int id = q.value("id").toInt();
+        lastUploadedId = id;
+        QJsonObject qso = qsoPayload(q);
+        // DxQSO keys a QSO on call, date, time and band, and refuses one without a band. A
+        // frequency that is not a number on an amateur band gives none: say so here, where the
+        // operator can fix it, instead of sending it to be refused.
+        if (qso["band"].toString().isEmpty()) {
+            QString why = tr("frequency \"%1\" is not on an amateur band").arg(q.value("freq").toString());
+            setQsoState(id, "R", QString(), why);
+            rejected++;
+            errors << tr("%1 %2 %3 not sent: %4").arg(q.value("call").toString(),
+                q.value("date").toString(), q.value("time").toString(), why);
+            continue;
+        }
+        batchIds << id;
+        batchPayload.append(qso);
+    }
+    if (any && batchIds.isEmpty()) {
+        stepUpload();       // the whole batch was refused here: carry on with the next one
+        return;
     }
     if (batchIds.isEmpty()) {
         if (runDownload) {
@@ -530,8 +573,6 @@ void dxqsoManager::stepUpload()
         }
         return;
     }
-    lastUploadedId = batchIds.last();
-
     QJsonObject body{{"qsos", batchPayload}};
     QNetworkRequest r = request("/upload");
     r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -576,7 +617,7 @@ void dxqsoManager::stepUpload()
             }
             if (r["action"].toString() == "rejected") {
                 // An edit here sets it back to M and it is tried again.
-                setQsoState(batchIds[i], "R");
+                setQsoState(batchIds[i], "R", QString(), r["reason"].toString());
                 rejected++;
                 errors << tr("DxQSO rejected %1 %2 %3: %4").arg(s["call"].toString(),
                     s["qso_date"].toString(), s["time_on"].toString(), r["reason"].toString());

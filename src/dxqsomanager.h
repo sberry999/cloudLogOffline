@@ -54,6 +54,8 @@ public:
 
     Q_INVOKABLE QString describeKey(QString token) const;
     Q_INVOKABLE int waitingCount() const;
+    // QSOs DxQSO (or this log, before sending) refused, with why: "K2EZ 13.10.2026 03:30 — reason".
+    Q_INVOKABLE QStringList rejectedQsos() const;
     Q_INVOKABLE bool hasVendorToken() const;
 
     // The tests (and a developer build) set it here; a tester build bakes it in.
@@ -133,7 +135,8 @@ private:
     void refuseToken();
 
     QJsonObject qsoPayload(QSqlQuery &row);
-    void setQsoState(int id, const QString &status, const QString &qsoId = QString());
+    void setQsoState(int id, const QString &status, const QString &qsoId = QString(),
+                     const QString &reason = QString());
     void applyRecord(QJsonObject record);
     int matchLocal(const QVariantMap &cols, const QString &band);
 };
