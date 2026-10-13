@@ -111,7 +111,7 @@ private:
     QList<int> batchIds;
     QJsonArray batchPayload;
     QStringList batchDeleteIds;
-    int sent = 0, rejected = 0, deleted = 0;
+    int sent = 0, rejected = 0, deleted = 0, merged = 0;
     int inserted = 0, updated = 0, linked = 0, removed = 0, skipped = 0;
     QStringList errors;
 

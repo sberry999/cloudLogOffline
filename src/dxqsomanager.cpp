@@ -299,7 +299,7 @@ void dxqsoManager::startRun(bool withDownload, bool manual)
     manualRun = manual;
     startedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     lastUploadedId = 0;
-    sent = rejected = deleted = 0;
+    sent = rejected = deleted = merged = 0;
     inserted = updated = linked = removed = skipped = 0;
     errors.clear();
     stepDeletes();
@@ -318,12 +318,13 @@ void dxqsoManager::finishRun(const QString &fatal)
     if (linked)   parts << tr("%n matched", "", linked);
     if (removed)  parts << tr("%n removed (deleted on DxQSO)", "", removed);
     if (rejected) parts << tr("%n rejected", "", rejected);
+    if (merged)   parts << tr("%n duplicate(s) merged", "", merged);
     QString summary = parts.isEmpty() ? tr("Up to date") : parts.join(", ");
     lastStatus = QDateTime::currentDateTime().toString("HH:mm") + " " + summary
         + (errors.isEmpty() ? "" : " — " + errors.first());
     emit statusChanged();
 
-    if (inserted || updated || removed || linked || sent || rejected) {
+    if (inserted || updated || removed || linked || sent || rejected || merged) {
         model->select();
         emit model->updateNumberOfQSOs(model->numberOfQSOs());
     }
@@ -581,7 +582,24 @@ void dxqsoManager::stepUpload()
                     s["qso_date"].toString(), s["time_on"].toString(), r["reason"].toString());
                 continue;
             }
-            setQsoState(batchIds[i], "Y", r["qso_id"].toString());
+            // DxQSO matched it (call, date, time, band) to a record another QSO here already
+            // holds: the same QSO logged twice, once here and once arriving by download. DxQSO
+            // applied this one's values to that record, and the other QSO receives them on
+            // the next download, so this copy goes (straight SQL: nothing to delete there).
+            QString qsoId = r["qso_id"].toString();
+            QSqlQuery other;
+            other.prepare("SELECT 1 FROM dxqso_qso WHERE qso_id = ? AND qso_rowid <> ? LIMIT 1");
+            other.addBindValue(qsoId);
+            other.addBindValue(batchIds[i]);
+            if (!qsoId.isEmpty() && other.exec() && other.next()) {
+                QSqlQuery drop;
+                drop.prepare("DELETE FROM qsos WHERE id = ?");
+                drop.addBindValue(batchIds[i]);
+                drop.exec();
+                merged++;
+                continue;
+            }
+            setQsoState(batchIds[i], "Y", qsoId);
             sent++;
         }
         stepUpload();
@@ -760,6 +778,15 @@ void dxqsoManager::applyRecord(QJsonObject in)
         return;
     }
 
+    // Deleted here, and the delete not yet accepted by DxQSO: the record must not come back.
+    QSqlQuery pending;
+    pending.prepare("SELECT 1 FROM dxqso_pending_deletes WHERE qso_id = ? LIMIT 1");
+    pending.addBindValue(qsoId);
+    if (pending.exec() && pending.next()) {
+        skipped++;
+        return;
+    }
+
     QVariantMap cols = recordColumns(record);
 
     if (localId) {
@@ -767,14 +794,32 @@ void dxqsoManager::applyRecord(QJsonObject in)
             skipped++;      // edited here and not yet sent: this side's edit wins
             return;
         }
-        if (!cols.isEmpty()) {
-            QStringList sets;
+        // Only what differs is written, so the echo of this log's own upload changes nothing.
+        // Frequencies compare as numbers: DxQSO sends "14.074000" for "14.074".
+        QSqlQuery cur;
+        cur.prepare("SELECT * FROM qsos WHERE id = ?");
+        cur.addBindValue(localId);
+        QVariantMap changed;
+        if (cur.exec() && cur.next()) {
             for (auto it = cols.begin(); it != cols.end(); ++it) {
+                QString mine = cur.value(it.key()).toString();
+                QString theirs = it.value().toString();
+                bool same = (it.key() == "freq" || it.key() == "rxfreq")
+                    ? (mine.toDouble() == theirs.toDouble() && mine.isEmpty() == theirs.isEmpty())
+                    : mine == theirs;
+                if (!same) {
+                    changed[it.key()] = it.value();
+                }
+            }
+        }
+        if (!changed.isEmpty()) {
+            QStringList sets;
+            for (auto it = changed.begin(); it != changed.end(); ++it) {
                 sets << "\"" + it.key() + "\" = ?";
             }
             QSqlQuery q;
             q.prepare("UPDATE qsos SET " + sets.join(", ") + " WHERE id = ?");
-            for (auto it = cols.begin(); it != cols.end(); ++it) {
+            for (auto it = changed.begin(); it != changed.end(); ++it) {
                 q.addBindValue(it.value());
             }
             q.addBindValue(localId);
@@ -782,9 +827,11 @@ void dxqsoManager::applyRecord(QJsonObject in)
                 errors << q.lastError().text();
                 return;
             }
+            updated++;
         }
-        setQsoState(localId, "Y");
-        updated++;
+        if (status != "Y") {
+            setQsoState(localId, "Y");
+        }
         return;
     }
 

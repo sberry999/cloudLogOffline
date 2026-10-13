@@ -28,6 +28,8 @@ public:
     QStringList downloadQueries;
     QList<QByteArray> nextTokens;         // X-Next-Token sent with each download
     QString noVerdictFor;                 // a call the upload answers nothing for
+    bool failDeletes = false;             // /logbook/delete answers 500
+    QHash<QString, QString> naturalKeys;  // call|date|time -> qso_id, as DxQSO dedupes
 
     FakeDxqso() {
         server.listen(QHostAddress::LocalHost);
@@ -63,7 +65,7 @@ private:
 
         QByteArray out;
         QByteArray extra;
-        if (status != 200) {
+        if (status != 200 || (failDeletes && url.path() == "/logbook/delete")) {
             out = errorBody;
         } else if (url.path() == "/upload") {
             QJsonArray results;
@@ -71,8 +73,12 @@ private:
                 QJsonObject q = v.toObject();
                 uploads << q;
                 if (q["call"].toString() == noVerdictFor) continue;
-                QString id = q.contains("qso_id") ? q["qso_id"].toString() : QString("id-%1").arg(nextId++);
-                QString action = q.contains("qso_id") ? "updated" : "inserted";
+                // Like DxQSO: no qso_id -> matched on the natural key, or a new record.
+                QString key = q["call"].toString() + "|" + q["qso_date"].toString() + "|" + q["time_on"].toString().left(4);
+                QString id = q.contains("qso_id") ? q["qso_id"].toString() : naturalKeys.value(key);
+                QString action = id.isEmpty() ? "inserted" : "updated";
+                if (id.isEmpty()) id = QString("id-%1").arg(nextId++);
+                naturalKeys.insert(key, id);
                 if (q["call"].toString() == "REJECT") action = "rejected";
                 results.append(QJsonObject{{"action", action}, {"qso_id", id}, {"call", q["call"]},
                     {"qso_date", q["qso_date"]}, {"time_on", q["time_on"]}, {"reason", "test"}});
@@ -99,7 +105,8 @@ private:
             }
             out = QJsonDocument(QJsonObject{{"results", results}}).toJson();
         }
-        s->write("HTTP/1.1 " + QByteArray::number(status) + " X\r\nContent-Type: application/json\r\n"
+        int code = (failDeletes && url.path() == "/logbook/delete") ? 500 : status;
+        s->write("HTTP/1.1 " + QByteArray::number(code) + " X\r\nContent-Type: application/json\r\n"
                  + extra + "Content-Length: " + QByteArray::number(out.size())
                  + "\r\nConnection: close\r\n\r\n" + out);
         s->disconnectFromHost();
@@ -214,6 +221,16 @@ private slots:
         QCOMPARE(api->uploads.size(), 1);   // a download is never sent back
     }
 
+    void echoOfOwnUploadChangesNothing() {
+        // What DxQSO sends back for this log's own QSO, frequency formatted its way.
+        api->downloadQueue << QJsonObject{{"qso_id", "id-1"}, {"call", "W1AW"}, {"qso_date", "20261010"},
+            {"time_on", "120000"}, {"band", "20M"}, {"freq", "14.074000"}, {"mode", "FT8"},
+            {"comment", "from DxQSO"}};
+        QVERIFY(sync());
+        QVERIFY2(!dx->status().contains("updated"), qPrintable(dx->status()));
+        QCOMPARE(value("SELECT freq FROM qsos WHERE call = 'W1AW'"), QString("14.074"));
+    }
+
     void editSendsQsoId() {
         int row = rowOf("W1AW");
         model->updateQSO(row, "W1AW", "Name", "USA", "10.10.2026", "12:00", "14.074", "FT8", "-10",
@@ -272,6 +289,41 @@ private slots:
         QVERIFY(sync());
         QVERIFY(api->deletes.contains("id-98"));
         QCOMPARE(count("SELECT COUNT(*) FROM dxqso_pending_deletes"), 0);
+    }
+
+    void unsentDeleteIsNotUndone() {
+        add("W3GONE", "11:00");
+        QVERIFY(sync());
+        QString id = value("SELECT x.qso_id FROM dxqso_qso x JOIN qsos q ON q.id = x.qso_rowid"
+                           " WHERE q.call = 'W3GONE'");
+        model->deleteQSO(rowOf("W3GONE"));
+        // The delete fails, and the download still holds the record (not yet deleted there).
+        api->failDeletes = true;
+        api->downloadQueue << QJsonObject{{"qso_id", id}, {"call", "W3GONE"}, {"qso_date", "20261010"},
+            {"time_on", "110000"}, {"band", "20M"}, {"mode", "FT8"}};
+        QVERIFY(sync());
+        QCOMPARE(count("SELECT COUNT(*) FROM qsos WHERE call = 'W3GONE'"), 0);
+        QCOMPARE(count("SELECT COUNT(*) FROM dxqso_pending_deletes"), 1);
+        api->failDeletes = false;
+        QVERIFY(sync());
+        QVERIFY(api->deletes.contains(id));
+        QCOMPARE(count("SELECT COUNT(*) FROM dxqso_pending_deletes"), 0);
+    }
+
+    void sameQsoLoggedTwiceIsMerged() {
+        // Logged elsewhere, arrives by download...
+        api->naturalKeys.insert("K9DUP|20261010|1600", "id-500");
+        api->downloadQueue << QJsonObject{{"qso_id", "id-500"}, {"call", "K9DUP"}, {"qso_date", "20261010"},
+            {"time_on", "1600"}, {"band", "20M"}, {"freq", "14.074"}, {"mode", "FT8"}};
+        QVERIFY(sync());
+        QCOMPARE(count("SELECT COUNT(*) FROM qsos WHERE call = 'K9DUP'"), 1);
+        // ...and then logged here as well.
+        add("K9DUP", "16:00", "logged here too");
+        QVERIFY(sync());
+        QCOMPARE(count("SELECT COUNT(*) FROM qsos WHERE call = 'K9DUP'"), 1);
+        QCOMPARE(count("SELECT COUNT(*) FROM dxqso_qso WHERE qso_id = 'id-500'"), 1);
+        QVERIFY2(dx->status().contains("merged"), qPrintable(dx->status()));
+        QCOMPARE(dx->waitingCount(), 0);
     }
 
     void reusedRowIdDoesNotInheritAnId() {
