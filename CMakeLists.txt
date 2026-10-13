@@ -57,6 +57,7 @@ qt_add_resources(LibCloudLogOffline resources
     FILES
         # Qt6 qml
         qml/AboutView.qml
+        qml/AppMessage.qml
         qml/DatePicker.qml
         qml/DrawerItem.qml
         qml/ExportHeader.qml

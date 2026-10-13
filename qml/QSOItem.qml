@@ -3,7 +3,6 @@ import QtQuick.Layouts 1.0
 import QtQuick.Controls 2.12
 import QtQuick.Controls.Material 2.4
 import Qt5Compat.GraphicalEffects
-import Qt.labs.platform // MessageDialog, as on the Export page
 
 SwipeDelegate {
     id: swipeDelegateId
@@ -27,6 +26,20 @@ SwipeDelegate {
         } else {
             openEditor()
         }
+    }
+
+    // The delete confirmation (AppMessage: the native macOS dialog never opened, so a click on
+    // the red button did nothing).
+    AppMessage {
+        id: deleteConfirm
+        title: qsTr("Delete?")
+        question: true
+        text: (settings.dxqsoActive
+               ? qsTr("Delete this QSO here and on DxQSO?")
+               : qsTr("Delete this QSO?"))
+              + "\n\n" + model.call.toUpperCase() + "  " + model.date + "  " + model.time
+        onAccepted: qsoModel.deleteQSO(index)
+        onRejected: swipe.close()
     }
 
     function openEditor() {
@@ -407,16 +420,5 @@ SwipeDelegate {
             onClicked: deleteConfirm.open()
         }
 
-        MessageDialog {
-            id: deleteConfirm
-            title: qsTr("Delete?")
-            text: (settings.dxqsoActive
-                   ? qsTr("Delete this QSO here and on DxQSO?")
-                   : qsTr("Delete this QSO?"))
-                  + "\n\n" + model.call.toUpperCase() + "  " + model.date + "  " + model.time
-            buttons: MessageDialog.Yes | MessageDialog.No
-            onYesClicked: qsoModel.deleteQSO(index)
-            onNoClicked: swipe.close()
-        }
     }
 }

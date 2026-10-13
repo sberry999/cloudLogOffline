@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Controls.Material
-import Qt.labs.platform // Qt 6.3: QtQuick.Dialogs
 //import Qt.labs.settings
 import de.webappjung 1.0
 
@@ -11,9 +10,8 @@ Page {
     title: "Export"
     anchors.margins: 5
 
-    MessageDialog {
+    AppMessage {
         id: cloudLogMessage
-        buttons: MessageDialog.Ok
     }
 
     Connections{
@@ -204,11 +202,11 @@ Page {
                 }
             }
 
-            MessageDialog {
+            AppMessage {
                 id: deleteUploadedMessage
                 title: qsTr("Delete?")
                 text: qsTr("Delete all Uploaded QSOs?")
-                buttons: MessageDialog.Yes | MessageDialog.No
+                question: true
                 onAccepted : {
                     console.log("Delete Uploaded QSOs")
                     cl.deleteUploadedQsos()
@@ -217,7 +215,7 @@ Page {
                 }
             }
 
-            MessageDialog {
+            AppMessage {
                 id: exportMessage
                 title: qsTr("Exported")
                 text: qsTr("Copied to Clipboard")
@@ -266,12 +264,12 @@ Page {
                 }
             }
 
-            MessageDialog {
+            AppMessage {
                 id: deleteMessage
                 title: qsTr("Delete?")
                 //icon: StandardIcon.Question
                 text: settings.dxqsoActive ? qsTr("Delete all QSOs on this device? They stay on DxQSO.") : qsTr("Delete all QSOs?")
-                buttons: MessageDialog.Yes | MessageDialog.No
+                question: true
                 onAccepted : {
                     console.log("Delete all QSOs")
                     cl.deleteQsos()
