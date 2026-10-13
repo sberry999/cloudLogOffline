@@ -15,6 +15,10 @@ if(ANDROID OR IOS)
 endif()
 
 find_package(Qt6 ${minimum_qt_version} REQUIRED COMPONENTS Gui LinguistTools Positioning Quick Sql Svg Widgets Xml)
+# Qt 6.10 and later only define Qt::GuiPrivate when it is asked for by name.
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.10)
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+endif()
 
 
 add_library(LibCloudLogOffline STATIC
