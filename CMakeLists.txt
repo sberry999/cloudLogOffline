@@ -28,6 +28,7 @@ add_library(LibCloudLogOffline STATIC
     src/cloudlogmanager.cpp
     src/csvtools.cpp
     src/dbmanager.cpp
+    src/dxqsomanager.cpp
     src/logtools.cpp
     src/maidenhead.cpp
     src/migrationmanager.cpp
@@ -44,6 +45,13 @@ file(GLOB headers "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
 target_sources(LibCloudLogOffline PRIVATE ${headers})
 
 target_compile_definitions(LibCloudLogOffline PUBLIC GIT_VERSION="${PROJECT_VERSION}")
+
+# DxQSO sync: the vendor token naming this app to DxQSO. Not a secret, but kept out of the
+# repository: pass -DDXQSO_VENDOR_TOKEN=... when building a tester build.
+set(DXQSO_VENDOR_TOKEN "" CACHE STRING "DxQSO vendor token baked into the build")
+if(DXQSO_VENDOR_TOKEN)
+    target_compile_definitions(LibCloudLogOffline PRIVATE DXQSO_VENDOR_TOKEN="${DXQSO_VENDOR_TOKEN}")
+endif()
 
 qt_add_resources(LibCloudLogOffline resources
     FILES
