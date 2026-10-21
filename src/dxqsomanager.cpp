@@ -381,7 +381,9 @@ QNetworkRequest dxqsoManager::request(const QString &path, const QString &query,
     r.setRawHeader("dxqso-station-token", "Bearer " + (key.isEmpty() ? token : key).toUtf8());
     r.setRawHeader("Accept", "application/json");
     r.setRawHeader("User-Agent", "CloudLogOffline/" + QByteArray(GIT_VERSION) + " DxQSO-sync");
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     r.setTransferTimeout(120000);
+#endif
     return r;
 }
 
